@@ -825,11 +825,25 @@ function ingestGeojson(gj, forLevel){
 }
 async function autoLoadGeojson(){
   const map={national:"in.geojson",state:"st.geojson",district:"dt.geojson"};
+  const githubBase="https://raw.githubusercontent.com/AlenAlex3112/bci-metrics-dashboard/main/";
   let any=false;
   for(const [lvl,file] of Object.entries(map)){
-    try{ const r=await fetch(file); if(!r.ok)continue;
-      const gj=await r.json(); const savedLevel=S.level; S.level=lvl; ingestGeojson(gj,lvl); S.level=savedLevel; any=true; }
-    catch(e){/* file:// or missing — silent */}
+    try{
+      let r = await fetch(file);
+      if(!r.ok){
+        r = await fetch(githubBase + file);
+      }
+      if(!r.ok) continue;
+      const gj=await r.json(); const savedLevel=S.level; S.level=lvl; ingestGeojson(gj,lvl); S.level=savedLevel; any=true;
+    }
+    catch(e){
+      try {
+        const r2 = await fetch(githubBase + file);
+        if(r2.ok){
+          const gj = await r2.json(); const savedLevel=S.level; S.level=lvl; ingestGeojson(gj,lvl); S.level=savedLevel; any=true;
+        }
+      } catch(e2){/* fallback silent */}
+    }
   }
   if(any) render();
 }
