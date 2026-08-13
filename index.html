@@ -340,6 +340,8 @@ function pick(rec,metric,field){ const m=rec.metrics&&rec.metrics[metric]; retur
 const S = {
   level:"state", metric:"Observations", colorField:"CUR", dtState:"ALL",
   tierFilter:"ALL", zoneFilter:"ALL",
+  tableSort:{ col:"value", dir:"desc" },
+  tableSearch:"",
   months:{},          // { "Jun-26": {national, states, districts} }
   monthKeys:[],       // sorted ["...","Jun-26"]
   activeMonth:null,
@@ -779,27 +781,227 @@ function nationalTable(){
     <div style="overflow-x:auto;"><table class="dt"><thead><tr><th>Metric</th>${N.header.map(h=>`<th style="text-align:right">${h}</th>`).join("")}</tr></thead><tbody>`;
   Object.entries(N.metrics).forEach(([k,v])=>{
     html+=`<tr><td style="font-weight:500;color:${v._has?COL.ink:COL.mut}">${k}</td>`+
-      N.header.map(h=>`<td class="n">${v[h]==null?"—":(h==="YoY%"?fmtPctHtml(v[h]):fmt(v[h]))}</td>`).join("")+`</tr>`;
+      N.header.map(h=>`<td class="n">${v[h]==null?"—":(h==="YoY%"?`<span class="yoy-hover-cell" data-yoy-code="IN" data-yoy-name="India" data-yoy-level="national" style="cursor:help;">${fmtPctHtml(v[h])}</span>`:fmt(v[h]))}</td>`).join("")+`</tr>`;
   });
   html+=`</tbody></table></div>`; sec.innerHTML=html; return sec;
 }
+
 function dataTable(rows){
-  const sec=document.createElement("div"); sec.className="card"; sec.style.overflow="hidden";
+  const sec=document.createElement("div"); sec.className="card"; sec.style.overflow="hidden"; sec.id="dataTableCard";
   const isState=S.level==="state";
-  let html=`<div style="padding:14px 16px;border-bottom:1px solid var(--line);" class="row">
+
+  if(!S.tableSort) S.tableSort = { col: "value", dir: "desc" };
+
+  // Filter rows by table search
+  let filtered = [...rows];
+  if(S.tableSearch && S.tableSearch.trim()){
+    const q = S.tableSearch.trim().toLowerCase();
+    filtered = filtered.filter(r => r.name.toLowerCase().includes(q) || (r.region && r.region.toLowerCase().includes(q)) || (r.code && r.code.toLowerCase().includes(q)));
+  }
+
+  // Sort rows by S.tableSort
+  const { col, dir } = S.tableSort;
+  const mult = dir === "asc" ? 1 : -1;
+  filtered.sort((a, b) => {
+    let va = a[col], vb = b[col];
+    if(col === "name" || col === "region"){
+      va = String(va || "").toLowerCase();
+      vb = String(vb || "").toLowerCase();
+      return va.localeCompare(vb) * mult;
+    }
+    va = va ?? -Infinity; vb = vb ?? -Infinity;
+    return (va > vb ? 1 : va < vb ? -1 : 0) * mult;
+  });
+
+  const sortIcon = c => (S.tableSort?.col === c ? (S.tableSort?.dir === "asc" ? " ▲" : " ▼") : " ↕");
+
+  let html=`<div style="padding:12px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
       <h2 class="h2">▤ ${isState?"States":"Districts"} · ${S.metric}
-      <span class="mono" style="font-size:12px;color:var(--mut);margin-left:8px;">(${rows.length})</span></h2></div>
-    <div style="max-height:460px;overflow:auto;"><table class="dt"><thead><tr>
-      <th>${isState?"State":"District"}</th><th>${isState?"Zone":"State"}</th>
-      <th style="text-align:right">prev</th><th style="text-align:right">${curMonAbbrev()}</th><th style="text-align:right">YoY%</th>
+      <span class="mono" style="font-size:12px;color:var(--mut);margin-left:8px;">(${filtered.length} of ${rows.length})</span></h2>
+      <div class="row">
+        <input type="text" id="tableSearch" placeholder="🔍 Filter ${isState?"state":"district"} or zone..."
+          value="${S.tableSearch||""}" style="width:230px;padding:6px 10px;font-size:12px;border-radius:6px;border:1px solid var(--line);" />
+      </div>
+    </div>
+    <div style="max-height:480px;overflow:auto;"><table class="dt"><thead><tr>
+      <th style="cursor:pointer;user-select:none;" data-sort="name">${isState?"State":"District"}${sortIcon("name")}</th>
+      <th style="cursor:pointer;user-select:none;" data-sort="region">${isState?"Zone":"State"}${sortIcon("region")}</th>
+      <th style="text-align:right;cursor:pointer;user-select:none;" data-sort="prev">Prev Month${sortIcon("prev")}</th>
+      <th style="text-align:right;cursor:pointer;user-select:none;" data-sort="value">${curMonAbbrev()}${sortIcon("value")}</th>
+      <th style="text-align:right;cursor:pointer;user-select:none;" data-sort="yoy">YoY%${sortIcon("yoy")}</th>
     </tr></thead><tbody>`;
-  [...rows].sort((a,b)=>(b.value??-1)-(a.value??-1)).forEach(r=>{
+
+  filtered.forEach(r=>{
     const zone=isState?`<span class="pill" style="background:${REGION_COLORS[r.region]||COL.sage}">${r.region}</span>`:`<span style="color:var(--ink2)">${r.region}</span>`;
+    const yoyHtml = fmtPctHtml(r.yoy);
     html+=`<tr><td style="font-weight:500">${r.name}</td><td>${zone}</td>
       <td class="n">${fmt(r.prev)}</td><td class="n" style="font-weight:600">${fmt(r.value)}</td>
-      <td class="n">${fmtPctHtml(r.yoy)}</td></tr>`;
+      <td class="n yoy-hover-cell" data-yoy-code="${r.code}" data-yoy-name="${r.name}" data-yoy-level="${S.level}" style="cursor:help;">${yoyHtml}</td></tr>`;
   });
-  html+=`</tbody></table></div>`; sec.innerHTML=html; return sec;
+
+  html+=`</tbody></table></div>`; sec.innerHTML=html;
+
+  setTimeout(()=>{
+    const input = sec.querySelector("#tableSearch");
+    if(input){
+      input.oninput = e => {
+        S.tableSearch = e.target.value;
+        const card = document.getElementById("dataTableCard");
+        if(card){
+          const newCard = dataTable(rows);
+          card.replaceWith(newCard);
+          const newInput = document.getElementById("tableSearch");
+          if(newInput) { newInput.focus(); newInput.setSelectionRange(newInput.value.length, newInput.value.length); }
+        }
+      };
+    }
+    sec.querySelectorAll("th[data-sort]").forEach(th=>{
+      th.onclick = () => {
+        const sc = th.getAttribute("data-sort");
+        if(S.tableSort?.col === sc){
+          S.tableSort.dir = S.tableSort.dir === "asc" ? "desc" : "asc";
+        } else {
+          S.tableSort = { col: sc, dir: (sc === "name" || sc === "region") ? "asc" : "desc" };
+        }
+        const card = document.getElementById("dataTableCard");
+        if(card){
+          const newCard = dataTable(rows);
+          card.replaceWith(newCard);
+        }
+      };
+    });
+  }, 0);
+
+  return sec;
+}
+
+/* ---------- YOY HOVER POPUP ---------- */
+function buildYoyPopupContent(level, code, name){
+  const metric = S.metric;
+  const curMon = curMonAbbrev();
+
+  // 12-Month Series
+  const keys12 = S.monthKeys.slice(-12);
+  const series12 = keys12.map(k => {
+    const monthData = S.months[k];
+    let val = null;
+    if(level === "national"){
+      const mm = monthData?.national?.metrics?.[metric];
+      val = mm ? mm[monthOf(k)?.mon || "Jun"] : null;
+    } else {
+      const recList = level === "state" ? monthData?.states : monthData?.districts;
+      const rec = (recList || []).find(r => r.code === code || r.name === name || normName(r.name) === normName(name));
+      val = rec ? pickCur(rec, metric, monthOf(k)?.mon || "Jun") : null;
+    }
+    return { month: k, value: val };
+  });
+
+  // Linear Trendline Points (y = mx + c)
+  const validPts = series12.map((d, i) => ({ i, val: d.value })).filter(d => d.val != null);
+  let trendPts = [];
+  if(validPts.length >= 2){
+    const n = validPts.length;
+    const sumX = validPts.reduce((a, d) => a + d.i, 0);
+    const sumY = validPts.reduce((a, d) => a + d.val, 0);
+    const sumXY = validPts.reduce((a, d) => a + d.i * d.val, 0);
+    const sumX2 = validPts.reduce((a, d) => a + d.i * d.i, 0);
+    const denom = (n * sumX2 - sumX * sumX);
+    if(denom !== 0){
+      const m = (n * sumXY - sumX * sumY) / denom;
+      const c = (sumY - m * sumX) / n;
+      trendPts = series12.map((d, i) => ({ x: i, y: Math.round(m * i + c) }));
+    }
+  }
+
+  // 5-Year Same-Month Series
+  const sameMonthKeys = S.monthKeys.filter(k => monthOf(k)?.mon === curMon);
+  const series5Yr = sameMonthKeys.map(k => {
+    const monthData = S.months[k];
+    let val = null, yoy = null;
+    if(level === "national"){
+      const mm = monthData?.national?.metrics?.[metric];
+      val = mm ? mm[curMon] : null;
+      yoy = mm ? mm["YoY%"] : null;
+    } else {
+      const recList = level === "state" ? monthData?.states : monthData?.districts;
+      const rec = (recList || []).find(r => r.code === code || r.name === name || normName(r.name) === normName(name));
+      val = rec ? pickCur(rec, metric, curMon) : null;
+      yoy = rec ? pick(rec, metric, "YoY%") : null;
+    }
+    return { monthKey: k, year: "20" + k.split("-")[1], value: val, yoy };
+  });
+
+  // SVG Chart Setup
+  const W = 330, H = 110, p = { t: 15, r: 15, b: 20, l: 35 };
+  const vals = series12.map(d => d.value).filter(v => v != null);
+  const maxV = Math.max(...vals, 1);
+  const minV = Math.min(...vals, 0);
+
+  const scaleX = i => p.l + (i / Math.max(1, series12.length - 1)) * (W - p.l - p.r);
+  const scaleY = v => H - p.b - ((v - minV) / Math.max(1, maxV - minV)) * (H - p.t - p.b);
+
+  let pathD = "";
+  series12.forEach((d, i) => {
+    if (d.value != null) {
+      const x = scaleX(i), y = scaleY(d.value);
+      pathD += (pathD === "" ? `M${x},${y}` : ` L${x},${y}`);
+    }
+  });
+
+  let trendD = "";
+  if (trendPts.length >= 2) {
+    trendPts.forEach((d, i) => {
+      const x = scaleX(i), y = scaleY(d.y);
+      trendD += (trendD === "" ? `M${x},${y}` : ` L${x},${y}`);
+    });
+  }
+
+  return `
+    <div style="font-family:'Space Grotesk';font-weight:700;font-size:13.5px;color:var(--ink);display:flex;justify-content:space-between;align-items:center;">
+      <span>${name}</span>
+      <span style="font-family:'IBM Plex Mono';font-size:11px;color:var(--teal);">${metric}</span>
+    </div>
+    <div style="font-size:10.5px;color:var(--mut);margin-bottom:6px;">12-Month Trend (${series12[0]?.month || ""} → ${series12[series12.length-1]?.month || ""})</div>
+    
+    <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;background:#F4F7F4;border-radius:6px;padding:2px;">
+      <!-- Trendline -->
+      ${trendD ? `<path d="${trendD}" fill="none" stroke="#D98A3D" stroke-width="1.5" stroke-dasharray="3,3" />` : ""}
+      <!-- Main Line -->
+      ${pathD ? `<path d="${pathD}" fill="none" stroke="${COL.teal}" stroke-width="2" />` : ""}
+      <!-- Data Dots & Labels -->
+      ${series12.map((d, i) => {
+        if (d.value == null) return "";
+        const x = scaleX(i), y = scaleY(d.value);
+        const isEnd = i === 0 || i === series12.length - 1 || i === Math.floor(series12.length/2);
+        return `<circle cx="${x}" cy="${y}" r="3" fill="${COL.tealDeep}" />
+          ${isEnd ? `<text x="${x}" y="${Math.max(10, y - 6)}" font-size="8px" font-family="IBM Plex Mono" fill="${COL.ink2}" text-anchor="middle">${d.value >= 1000 ? (d.value/1000).toFixed(1)+'k' : d.value}</text>` : ""}`;
+      }).join("")}
+    </svg>
+    <div style="font-size:9.5px;color:var(--mut);display:flex;justify-content:space-between;margin-top:2px;" class="mono">
+      <span>${series12[0]?.month || ""}</span>
+      <span style="color:#D98A3D;">--- Linear Trendline</span>
+      <span>${series12[series12.length-1]?.month || ""}</span>
+    </div>
+
+    <!-- 5-Year Same-Month Comparison -->
+    <div style="margin-top:8px;border-top:1px dashed var(--line);padding-top:6px;">
+      <div style="font-family:'Space Grotesk';font-size:11px;font-weight:600;color:var(--ink2);margin-bottom:4px;">
+        Historical ${curMon} Comparison (${series5Yr.length} year${series5Yr.length>1?"s":""})
+      </div>
+      <table style="width:100%;font-size:10.5px;border-collapse:collapse;" class="mono">
+        <thead><tr style="color:var(--mut);border-bottom:1px solid var(--line);"><th style="text-align:left;padding:2px 0;">Year</th><th style="text-align:right;padding:2px 0;">${metric}</th><th style="text-align:right;padding:2px 0;">YoY%</th></tr></thead>
+        <tbody>
+          ${series5Yr.map(s => `
+            <tr>
+              <td style="padding:2px 0;">${s.monthKey}</td>
+              <td style="text-align:right;padding:2px 0;">${fmt(s.value)}</td>
+              <td style="text-align:right;padding:2px 0;">${fmtPctHtml(s.yoy)}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
 }
 
 /* ================================================================= *
@@ -968,6 +1170,50 @@ $("btnRefresh").onclick=loadLive;
 $("btnXlsx").onclick=exportExcel;
 $("btnChartPng").onclick=()=>svgToPng($("chartSvg"),`ebird-${S.level}-${S.metric}.png`);
 $("btnMapPng").onclick=()=>svgToPng($("mapSvg"),`ebird-map-${S.level}.png`);
+
+/* --- Global YoY Hover Popup --- */
+const yoyPopupEl = document.createElement("div");
+yoyPopupEl.id = "yoyPopup";
+yoyPopupEl.style.cssText = "position:fixed;display:none;z-index:99999;width:350px;background:#FBFCFA;border:1px solid #0E7C7B;border-radius:12px;box-shadow:0 12px 36px rgba(0,0,0,0.22);padding:14px;pointer-events:none;transition:opacity .12s;";
+document.body.appendChild(yoyPopupEl);
+
+function positionYoyPopup(e){
+  const w = 350, h = 290;
+  let x = e.clientX + 16;
+  let y = e.clientY - 40;
+  if(x + w > window.innerWidth) x = e.clientX - w - 16;
+  if(y + h > window.innerHeight) y = window.innerHeight - h - 16;
+  if(y < 10) y = 10;
+  yoyPopupEl.style.left = `${x}px`;
+  yoyPopupEl.style.top = `${y}px`;
+}
+
+document.addEventListener("mouseover", e => {
+  const cell = e.target.closest(".yoy-hover-cell");
+  if(cell){
+    const code = cell.getAttribute("data-yoy-code");
+    const name = cell.getAttribute("data-yoy-name");
+    const level = cell.getAttribute("data-yoy-level") || S.level;
+    yoyPopupEl.innerHTML = buildYoyPopupContent(level, code, name);
+    yoyPopupEl.style.display = "block";
+    yoyPopupEl.style.opacity = "1";
+    positionYoyPopup(e);
+  }
+});
+
+document.addEventListener("mousemove", e => {
+  if(yoyPopupEl.style.display === "block"){
+    positionYoyPopup(e);
+  }
+});
+
+document.addEventListener("mouseout", e => {
+  const cell = e.target.closest(".yoy-hover-cell");
+  if(cell){
+    yoyPopupEl.style.display = "none";
+    yoyPopupEl.style.opacity = "0";
+  }
+});
 
 initEmbedded();      // instant paint with the built-in Jun-26 sample
 render();
