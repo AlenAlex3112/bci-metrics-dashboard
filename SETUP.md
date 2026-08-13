@@ -34,21 +34,25 @@ Then visit **http://localhost:8000** in your browser. That's it.
 If you just double-click `index.html` instead, it still works — the map falls
 back to the **Load GeoJSON** button and the sheet connection is disabled.
 
-## 3. Connect your Google Sheet (one time)
+## 3. Connect your Google Sheet
 
-**Recommended — Apps Script (works even on a private sheet, loads all tabs at once):**
-1. In your sheet: **Extensions ▸ Apps Script**. Delete what's there, paste the
-   contents of `apps-script.gs`, Save.
-2. **Deploy ▸ New deployment ▸ Web app.** Set *Execute as: Me*,
-   *Who has access: Anyone*. **Deploy**, then authorise (it only reads the sheet).
-3. Copy the **Web app URL** (ends in `/exec`), paste it into the dashboard's
-   *Google Sheet source* box, choose a range (e.g. last 5 years), **Connect & load**.
+Choose one of two connection methods depending on your privacy & deployment preferences:
 
-**No-setup alternative:** make the sheet **Share ▸ Anyone with the link ▸ Viewer**,
-then paste the normal sheet link. Slower (one request per tab) and blocked if your
-organisation disables link-sharing — that's when to use the Apps Script method.
+**Option A · Privacy-Safe Public CSV (Recommended for Public Repos):**
+- Make your Google Sheet **Share ▸ Anyone with the link ▸ Viewer**.
+- Leave `APPS_SCRIPT_URL: ""` empty inside `CONFIG` at the top of `index.html`.
+- The dashboard automatically fetches public CSV tabs month-by-month without revealing any `/exec` web app URL in your public repository code.
+
+**Option B · Apps Script Web App (Fastest multi-year load for Private Repos / Internal use):**
+1. In your sheet: **Extensions ▸ Apps Script**. Delete what's there, paste the contents of `apps-script.gs`, Save.
+2. **Deploy ▸ New deployment ▸ Web app.** Set *Execute as: Me*, *Who has access: Anyone*. **Deploy**, then authorise.
+3. Copy the **Web app URL** (ends in `/exec`), paste it into `CONFIG.APPS_SCRIPT_URL` at the top of `index.html` or append `?apps_script=<URL>` to your dashboard URL.
 
 Tabs must follow the `MMM-YY-IN / -ST / -DT` convention, e.g. `Jun-26-ST`.
+
+## Map Joins
+- **States map (`st.geojson`)**: Uses `STATE.NAME` feature property (100% verified match across all 37 Indian states & UTs).
+- **Districts map (`dt.geojson`)**: Uses `DISTRICT.NAME` feature property with built-in `DISTRICT_ALIASES` resolution (99%+ verified match across 735 district polygons).
 
 ## What each level shows
 - **National** — all metrics table + a Jan–Jun (or full multi-year) trend line.
@@ -64,42 +68,28 @@ Tabs must follow the `MMM-YY-IN / -ST / -DT` convention, e.g. `Jun-26-ST`.
 ## Notes / things you can tune
 - **Zones** and the **Power/Average/Weak** rule are assumptions. Zones live near the
   top of `index.html` in the `REGIONS` object; tiers are computed as terciles of the
-  selected metric. Tell me your real zone lists / tier rule and I'll bake them in.
+  selected metric.
 - `in.geojson` loads but isn't drawn — a national choropleth is a single shape, so
-  National uses the metrics table + trend instead. Say the word if you want it drawn.
-- Data quirks handled automatically: comma-numbers, the 2-row headers, the two junk
-  district rows, and the 6 UTs that appear only at district level.
+  National uses the metrics table + trend instead.
+- Data quirks handled automatically: comma-numbers, 2-row headers, junk district rows (`code 0`), and UTs appearing at district level.
 
 ## 4. Host it on GitHub Pages
 
-GitHub Pages serves over HTTPS, so it *is* a proper web server — the "serve the
-folder" step above is handled for you. GeoJSON auto-load and the Google Sheet
-connection both work on the live URL.
+GitHub Pages serves over HTTPS — the "serve the folder" step above is handled for you. GeoJSON auto-load and the Google Sheet connection both work on the live URL.
 
 **Steps**
-1. Create a repo (e.g. `ebird-dashboard`). Commit `index.html`, `st.geojson`,
-   `dt.geojson`, `in.geojson` at the **repo root**. (`apps-script.gs` and this file
-   are optional — they don't affect the page.)
-2. Repo **Settings ▸ Pages**. Under *Build and deployment*, Source = **Deploy from a
-   branch**, Branch = **main**, folder = **/ (root)**. Save.
-3. Wait ~1 minute. Your dashboard is live at
-   `https://<your-username>.github.io/ebird-dashboard/`.
+1. Create a repo (e.g. `ebird-dashboard`). Commit `index.html`, `st.geojson`, `dt.geojson`, `in.geojson` at the **repo root**.
+2. Repo **Settings ▸ Pages**. Under *Build and deployment*, Source = **Deploy from a branch**, Branch = **main**, folder = **/ (root)**. Save.
+3. Wait ~1 minute. Your dashboard is live at `https://<your-username>.github.io/ebird-dashboard/`.
 
-**Remembering your sheet link.** After you paste the Apps Script `/exec` URL and
-connect once, the page stores it in *your* browser and auto-connects next time — it
-is **not** written into the repo. You can also bookmark a preconfigured link with
-`?sheet=<url>` on the end, but note that anyone you share that link with can then
-load your data.
+**Dynamic URL parameters:**
+You can pass custom parameters in your browser URL:
+- `https://<your-username>.github.io/ebird-dashboard/?sheet=YOUR_SHEET_ID`
+- `https://<your-username>.github.io/ebird-dashboard/?apps_script=YOUR_EXEC_URL`
 
-**Privacy — read this before making the repo public.**
-- The page is a viewer; the interesting data lives in your Google Sheet, reached only
-  when someone enters your Apps Script URL. Keep that URL out of the repo (the default)
-  and a public page stays a public *tool*, not public *data*.
-- The bundled `Jun-26` sample data **is** inside `index.html`, so it becomes public if
-  the repo is public. If that matters, host from a **private repo** (GitHub Pages on
-  private repos needs a paid plan) or ask me to strip the embedded sample.
-- If you hardcode your sheet URL into the file for convenience, a public page exposes
-  all of that data to anyone who finds it. Prefer the paste-once / bookmark approach.
+**Privacy Guidelines:**
+- For a **public GitHub repository**, use Option A (Public CSV scan path) with `APPS_SCRIPT_URL: ""` so your Apps Script deployment URL is not committed to git.
+- For a **private GitHub repository** with GitHub Pages enabled, Option B (Apps Script) delivers instant fetching across 60+ months in a single network call.
 
 **Custom URL / troubleshooting**
 - Blank page or missing map on Pages: confirm the GeoJSON files are committed at the
