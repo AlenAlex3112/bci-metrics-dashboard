@@ -1112,6 +1112,7 @@ function ingestGeojson(gj, forLevel){
   S.geo[forLevel]={geojson:gj,props,joinProp:best,matchBy:bestMode};
 }
 async function autoLoadGeojson(){
+  if(S.geo.state && S.geo.district && S.geo.national) return; // Load ONCE! Never re-fetch to prevent GC crash
   const map={national:"in.geojson",state:"st.geojson",district:"dt.geojson"};
   const githubBase="https://raw.githubusercontent.com/AlenAlex3112/bci-metrics-dashboard/main/";
   let any=false;
@@ -1136,68 +1137,68 @@ async function autoLoadGeojson(){
   if(any) render();
 }
 
-/* --- Live load from CONFIG: Apps Script (/exec JSON) OR gviz CSV with gap-stop --- */
+/* --- On-Demand / Lazy Tab Loader --- */
+const pendingLoads = new Map();
+
+async function ensureMonthLoaded(monthKey){
+  if(S.months[monthKey] && (S.months[monthKey].states?.length || S.months[monthKey].national)) return true;
+  if(pendingLoads.has(monthKey)) return pendingLoads.get(monthKey);
+
+  const status=$("sheetStatus");
+  if(status) status.textContent = `⏳ Fetching ${monthKey} live on-demand from Google Sheet…`;
+
+  const loadPromise = (async () => {
+    const id = CONFIG.SHEET_ID;
+    const tData = {};
+    for(const t of ["IN","ST","DT"]){
+      const tabName = `${monthKey}-${t}`;
+      try {
+        const url = `https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(tabName)}`;
+        const res = await fetch(url);
+        if(res.ok){
+          const txt = await res.text();
+          if(!txt.trim().startsWith("<")) tData[t] = rowsOf(txt);
+        }
+      } catch(e){/* skip */}
+    }
+    if(tData.IN || tData.ST || tData.DT){
+      addMonthData(monthKey, { inRows: tData.IN, stRows: tData.ST, dtRows: tData.DT });
+      if(status) status.textContent = `✓ Live data active · ${monthKey} loaded live on-demand from Google Sheet`;
+      pendingLoads.delete(monthKey);
+      return true;
+    }
+    pendingLoads.delete(monthKey);
+    return false;
+  })();
+
+  pendingLoads.set(monthKey, loadPromise);
+  return loadPromise;
+}
+
 async function loadLive(){
   const status=$("sheetStatus"); const hint=$("srcHint");
-  hint.textContent="";
-  if(CONFIG.APPS_SCRIPT_URL){
-    status.textContent="Connecting to Google Sheet…";
-    try{
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 3500);
-      const r = await fetch(CONFIG.APPS_SCRIPT_URL, { redirect: "follow", signal: controller.signal });
-      clearTimeout(timer);
-      if(r.ok){
-        const j = await r.json(); const tabs = j.tabs || j;
-        if(tabs && Object.keys(tabs).length){ ingestTabs(tabs, "apps_script"); return; }
-      }
-    }catch(e){ console.warn("Apps Script skipped/timed out, switching to direct Google Sheet feed:", e); }
+  if(hint) hint.textContent="";
+
+  // Fast initial load of current month (Jun-26)
+  if(status) status.textContent = "Connecting to Google Sheet…";
+  const ok = await ensureMonthLoaded("Jun-26");
+
+  // Pre-populate available month selector options (12 months back)
+  const now = new Date();
+  for(let i=0; i<12; i++){
+    const d = new Date(now.getFullYear(), now.getMonth()-i, 1);
+    const key = `${MONTHS[d.getMonth()]}-${String(d.getFullYear()).slice(2)}`;
+    if(!S.months[key]) addMonthData(key, { inRows: null, stRows: null, dtRows: null });
   }
-  await loadViaCsv(status, hint);
-}
-async function loadViaCsv(status, hint){
-  const id=CONFIG.SHEET_ID; const tabs={}; let ok=0, gap=0;
-  const now=new Date();
-  status.textContent="Loading live tabs from Google Sheet…";
-  for(let i=0;i<CONFIG.MONTHS_BACK && gap<3;i++){
-    const d=new Date(now.getFullYear(),now.getMonth()-i,1);
-    const key=`${MONTHS[d.getMonth()]}-${String(d.getFullYear()).slice(2)}`;
-    let monthHit=0;
-    for(const t of ["IN","ST","DT"]){
-      const name=`${key}-${t}`;
-      try{
-        const url=`https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(name)}`;
-        const res=await fetch(url); if(!res.ok) continue;
-        const txt=await res.text();
-        if(txt.trim().startsWith("<")) continue; // HTML error page = tab missing / not public
-        tabs[name]=rowsOf(txt); ok++; monthHit++;
-      }catch(e){/* skip */}
-    }
-    if(monthHit===0) gap++; else gap=0;
-    status.textContent=`Loading live Google Sheet data… (${ok} tabs loaded)`;
-  }
-  if(!ok){
-    status.textContent="Couldn’t load live data — showing the built-in Jun-26 sample.";
-    hint.innerHTML="Set the sheet to <b>Anyone with the link: Viewer</b>, or deploy <code>apps-script.gs</code> and set <code>APPS_SCRIPT_URL</code> at the top of this file.";
-    return;
-  }
-  ingestTabs(tabs, "public_csv");
-}
-function ingestTabs(tabs, sourceMode){
-  const byMonth={};
-  Object.entries(tabs).forEach(([name,rows])=>{
-    const m=/^([A-Za-z]{3}-\d{2})-(IN|ST|DT)$/.exec(name); if(!m)return;
-    (byMonth[m[1]]||(byMonth[m[1]]={}))[m[2]]=rows;
-  });
-  if(!Object.keys(byMonth).length){ $("sheetStatus").textContent="No tabs matched MMM-YY-IN/ST/DT."; return; }
-  S.months={}; // replace the embedded sample with live data
-  Object.entries(byMonth).forEach(([key,t])=>addMonthData(key,{inRows:t.IN,stRows:t.ST,dtRows:t.DT}));
   recomputeMonthKeys();
-  const modeLabel = sourceMode === "apps_script" ? "Apps Script" : "Google Sheet CSV";
-  const rangeStr = S.monthKeys.length > 1 ? `${S.monthKeys[0]}–${S.monthKeys[S.monthKeys.length-1]}` : S.monthKeys[0];
-  if($("sourceLabel")) $("sourceLabel").textContent=`Live Google Sheet data (${rangeStr}) · eBird effort & participation`;
-  $("sheetStatus").textContent=`✓ Live data active · ${S.monthKeys.length} months loaded live from Google Sheet (${modeLabel})`;
-  autoLoadGeojson();
+  S.activeMonth = "Jun-26";
+
+  if(ok){
+    if($("sourceLabel")) $("sourceLabel").textContent = `Live Google Sheet data · eBird effort & participation`;
+    if(status) status.textContent = `✓ Live data active · Jun-26 loaded (On-demand month switching ready)`;
+  } else {
+    if(status) status.textContent = "Showing built-in sample data (Could not reach Google Sheet).";
+  }
   render();
 }
 
@@ -1251,7 +1252,7 @@ $("colorSel").onchange=e=>{S.colorField=e.target.value;render();};
 $("tierSel").onchange=e=>{S.tierFilter=e.target.value;render();};
 $("zoneSel").onchange=e=>{S.zoneFilter=e.target.value;render();};
 $("dtStateSel").onchange=e=>{S.dtState=e.target.value;render();};
-$("monthSel").onchange=e=>{S.activeMonth=e.target.value;render();};
+$("monthSel").onchange = async e => { const m = e.target.value; await ensureMonthLoaded(m); S.activeMonth = m; render(); };
 $("btnRefresh").onclick=loadLive;
 $("btnXlsx").onclick=exportExcel;
 $("btnChartPng").onclick=()=>svgToPng($("chartSvg"),`ebird-${S.level}-${S.metric}.png`);
