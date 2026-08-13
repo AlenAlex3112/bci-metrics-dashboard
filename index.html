@@ -629,30 +629,40 @@ function chartPanel(rows){
   const multi=S.monthKeys.length>1;
   const title = S.level==="national"
     ? `${S.metric} · ${multi?"trend":"Jan–Jun trend"}`
-    : `Top 15 ${S.level==="state"?"states":"districts"} · ${S.metric} (${curMonAbbrev()})`;
+    : `${S.level==="state"?"States":"Districts"} · ${S.metric} (${curMonAbbrev()})`;
   sec.innerHTML=`<h2 class="h2" style="margin-bottom:10px;">📊 ${title}</h2>`;
 
-  const W=560,H=S.level==="national"?300:400, m={t:12,r:20,b:26,l:52};
-  const svg=d3.create("svg").attr("viewBox",`0 0 ${W} ${H}`).attr("id","chartSvg")
-    .style("width","100%").style("height","auto");
-
   if(S.level==="national"){
+    const W=560,H=300, m={t:12,r:20,b:26,l:52};
+    const svg=d3.create("svg").attr("viewBox",`0 0 ${W} ${H}`).attr("id","chartSvg")
+      .style("width","100%").style("height","auto");
     let series;
     if(multi) series=buildSeries("national",null,S.metric);
     else { const mm=activeMon().national.metrics[S.metric]||activeMon().national.metrics.Observations;
       series=activeMon().national.header.filter(h=>h!=="YoY%").map(h=>({month:h,value:mm?mm[h]:null})); }
     lineChart(svg,series,W,H,m);
+    sec.appendChild(svg.node());
   } else {
-    const data=[...rows].filter(r=>r.value!=null).sort((a,b)=>b.value-a.value).slice(0,15);
+    const data=[...rows].filter(r=>r.value!=null).sort((a,b)=>b.value-a.value);
+    const itemH = 22;
+    const W=560;
+    const H=Math.max(320, data.length * itemH + 40);
+    const svg=d3.create("svg").attr("viewBox",`0 0 ${W} ${H}`).attr("id","chartSvg")
+      .style("width","100%").style("height","auto");
     barChart(svg,data,W,H);
+
+    const chartWrap=document.createElement("div");
+    chartWrap.style.cssText="max-height:480px;overflow-y:auto;";
+    chartWrap.appendChild(svg.node());
+    sec.appendChild(chartWrap);
+
     if(S.level==="state"){
       const legend=document.createElement("div"); legend.className="row"; legend.style.marginTop="8px";
       legend.innerHTML=Object.entries(REGION_COLORS).filter(([r])=>r!=="Unassigned")
         .map(([r,c])=>`<span style="display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--ink2);"><span style="width:10px;height:10px;border-radius:3px;background:${c}"></span>${r}</span>`).join("");
-      sec.appendChild(svg.node()); sec.appendChild(legend); return sec;
+      sec.appendChild(legend);
     }
   }
-  sec.appendChild(svg.node());
   return sec;
 }
 function lineChart(svg,series,W,H,m){
@@ -674,7 +684,7 @@ function lineChart(svg,series,W,H,m){
     .append("title").text(d=>`${d.month}: ${fmt(d.value)}`);
 }
 function barChart(svg,data,W,H){
-  const m={t:6,r:24,b:24,l:130};
+  const m={t:10,r:24,b:24,l:140};
   const y=d3.scaleBand().domain(data.map(d=>d.name)).range([m.t,H-m.b]).padding(.18);
   const x=d3.scaleLinear().domain([0,d3.max(data,d=>d.value)||1]).range([m.l,W-m.r]);
   svg.append("g").attr("transform",`translate(0,${H-m.b})`).call(d3.axisBottom(x).ticks(5)
@@ -685,7 +695,7 @@ function barChart(svg,data,W,H){
   svg.selectAll(".domain").remove();
   svg.selectAll("rect").data(data).join("rect")
     .attr("x",m.l).attr("y",d=>y(d.name)).attr("height",y.bandwidth())
-    .attr("width",d=>x(d.value)-m.l).attr("rx",3)
+    .attr("width",d=>Math.max(1, x(d.value)-m.l)).attr("rx",3)
     .attr("fill",d=>S.level==="state"?(REGION_COLORS[d.region]||COL.teal):COL.teal)
     .append("title").text(d=>`${d.name}: ${fmt(d.value)}`);
 }
