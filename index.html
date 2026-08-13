@@ -853,20 +853,24 @@ async function loadLive(){
   const status=$("sheetStatus"); const hint=$("srcHint");
   hint.textContent="";
   if(CONFIG.APPS_SCRIPT_URL){
-    status.textContent="Loading via Apps Script…";
+    status.textContent="Connecting to Google Sheet…";
     try{
-      const r=await fetch(CONFIG.APPS_SCRIPT_URL,{redirect:"follow"});
-      const j=await r.json(); const tabs=j.tabs||j;
-      if(tabs && Object.keys(tabs).length){ ingestTabs(tabs, "apps_script"); return; }
-      status.textContent="Apps Script returned no tabs — trying public CSV…";
-    }catch(e){ status.textContent="Apps Script unreachable — trying public CSV…"; console.error(e); }
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 3500);
+      const r = await fetch(CONFIG.APPS_SCRIPT_URL, { redirect: "follow", signal: controller.signal });
+      clearTimeout(timer);
+      if(r.ok){
+        const j = await r.json(); const tabs = j.tabs || j;
+        if(tabs && Object.keys(tabs).length){ ingestTabs(tabs, "apps_script"); return; }
+      }
+    }catch(e){ console.warn("Apps Script skipped/timed out, switching to direct Google Sheet feed:", e); }
   }
   await loadViaCsv(status, hint);
 }
 async function loadViaCsv(status, hint){
   const id=CONFIG.SHEET_ID; const tabs={}; let ok=0, gap=0;
   const now=new Date();
-  status.textContent="Loading from Google Sheet…";
+  status.textContent="Loading live tabs from Google Sheet…";
   for(let i=0;i<CONFIG.MONTHS_BACK && gap<3;i++){
     const d=new Date(now.getFullYear(),now.getMonth()-i,1);
     const key=`${MONTHS[d.getMonth()]}-${String(d.getFullYear()).slice(2)}`;
@@ -882,7 +886,7 @@ async function loadViaCsv(status, hint){
       }catch(e){/* skip */}
     }
     if(monthHit===0) gap++; else gap=0;
-    status.textContent=`Loading from Google Sheet… ${ok} tabs`;
+    status.textContent=`Loading live Google Sheet data… (${ok} tabs loaded)`;
   }
   if(!ok){
     status.textContent="Couldn’t load live data — showing the built-in Jun-26 sample.";
@@ -901,9 +905,10 @@ function ingestTabs(tabs, sourceMode){
   S.months={}; // replace the embedded sample with live data
   Object.entries(byMonth).forEach(([key,t])=>addMonthData(key,{inRows:t.IN,stRows:t.ST,dtRows:t.DT}));
   recomputeMonthKeys();
-  const modeLabel = sourceMode === "apps_script" ? "Apps Script" : "Public CSV";
-  $("sourceLabel").textContent=`Live · ${S.monthKeys.length} months · ${S.monthKeys[0]}→${S.monthKeys[S.monthKeys.length-1]}`;
-  $("sheetStatus").textContent=`Live · ${S.monthKeys.length} months loaded from Google Sheet (${modeLabel})`;
+  const modeLabel = sourceMode === "apps_script" ? "Apps Script" : "Google Sheet CSV";
+  const rangeStr = S.monthKeys.length > 1 ? `${S.monthKeys[0]}–${S.monthKeys[S.monthKeys.length-1]}` : S.monthKeys[0];
+  if($("sourceLabel")) $("sourceLabel").textContent=`Live Google Sheet data (${rangeStr}) · eBird effort & participation`;
+  $("sheetStatus").textContent=`✓ Live data active · ${S.monthKeys.length} months loaded live from Google Sheet (${modeLabel})`;
   autoLoadGeojson();
   render();
 }
