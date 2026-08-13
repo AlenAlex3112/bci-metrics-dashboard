@@ -123,7 +123,8 @@
 <main class="two" id="main"></main>
 <section id="tableWrap" style="padding:0 22px 30px;"></section>
 <footer style="padding:0 22px 34px;" class="note">
-  Live data loads automatically from the configured Google Sheet; <code>st.geojson</code> / <code>dt.geojson</code> load from this folder. Zones and Power/Average/Weak are editable assumptions (see chat / top of source).
+  Live data loads automatically from the configured Google Sheet; <code>st.geojson</code> / <code>dt.geojson</code> load from GitHub / local folder.
+  <span style="float:right;color:var(--teal);">v2.4 · Updated Aug 14 2026 (Per-Column Filters & 12M/5Y Hover Popup)</span>
 </footer>
 
 <script>
@@ -791,15 +792,37 @@ function dataTable(rows){
   const isState=S.level==="state";
 
   if(!S.tableSort) S.tableSort = { col: "value", dir: "desc" };
+  if(!S.colFilters) S.colFilters = { name: "", region: "", prevMin: "", valueMin: "", yoyType: "ALL" };
 
-  // Filter rows by table search
+  // Filter rows by per-column filters AND quick search
   let filtered = [...rows];
+  const f = S.colFilters;
   if(S.tableSearch && S.tableSearch.trim()){
     const q = S.tableSearch.trim().toLowerCase();
     filtered = filtered.filter(r => r.name.toLowerCase().includes(q) || (r.region && r.region.toLowerCase().includes(q)) || (r.code && r.code.toLowerCase().includes(q)));
   }
+  if(f.name && f.name.trim()){
+    const q = f.name.trim().toLowerCase();
+    filtered = filtered.filter(r => r.name.toLowerCase().includes(q));
+  }
+  if(f.region){
+    filtered = filtered.filter(r => r.region === f.region);
+  }
+  if(f.prevMin !== ""){
+    filtered = filtered.filter(r => r.prev != null && r.prev >= Number(f.prevMin));
+  }
+  if(f.valueMin !== ""){
+    filtered = filtered.filter(r => r.value != null && r.value >= Number(f.valueMin));
+  }
+  if(f.yoyType === "POS"){
+    filtered = filtered.filter(r => r.yoy != null && r.yoy > 0);
+  } else if(f.yoyType === "HIGH"){
+    filtered = filtered.filter(r => r.yoy != null && r.yoy > 50);
+  } else if(f.yoyType === "NEG"){
+    filtered = filtered.filter(r => r.yoy != null && r.yoy < 0);
+  }
 
-  // Sort rows by S.tableSort
+  // Sort rows
   const { col, dir } = S.tableSort;
   const mult = dir === "asc" ? 1 : -1;
   filtered.sort((a, b) => {
@@ -815,46 +838,113 @@ function dataTable(rows){
 
   const sortIcon = c => (S.tableSort?.col === c ? (S.tableSort?.dir === "asc" ? " ▲" : " ▼") : " ↕");
 
+  // Region options
+  const regionsList = isState
+    ? Object.keys(REGIONS)
+    : Array.from(new Set(rows.map(r => r.region).filter(Boolean))).sort();
+
+  const regionOpts = regionsList.map(rg => `<option value="${rg}" ${f.region===rg?"selected":""}>${rg}</option>`).join("");
+
   let html=`<div style="padding:12px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
       <h2 class="h2">▤ ${isState?"States":"Districts"} · ${S.metric}
       <span class="mono" style="font-size:12px;color:var(--mut);margin-left:8px;">(${filtered.length} of ${rows.length})</span></h2>
       <div class="row">
-        <input type="text" id="tableSearch" placeholder="🔍 Filter ${isState?"state":"district"} or zone..."
-          value="${S.tableSearch||""}" style="width:230px;padding:6px 10px;font-size:12px;border-radius:6px;border:1px solid var(--line);" />
+        <input type="text" id="tableSearch" placeholder="🔍 Quick filter..."
+          value="${S.tableSearch||""}" style="width:190px;padding:5px 9px;font-size:12px;border-radius:6px;border:1px solid var(--line);" />
+        ${(f.name||f.region||f.prevMin||f.valueMin||f.yoyType!=="ALL"||S.tableSearch)?`<button id="btnClearFilters" class="btn" style="font-size:11px;padding:4px 8px;">✕ Clear</button>`:""}
       </div>
     </div>
-    <div style="max-height:480px;overflow:auto;"><table class="dt"><thead><tr>
-      <th style="cursor:pointer;user-select:none;" data-sort="name">${isState?"State":"District"}${sortIcon("name")}</th>
-      <th style="cursor:pointer;user-select:none;" data-sort="region">${isState?"Zone":"State"}${sortIcon("region")}</th>
-      <th style="text-align:right;cursor:pointer;user-select:none;" data-sort="prev">Prev Month${sortIcon("prev")}</th>
-      <th style="text-align:right;cursor:pointer;user-select:none;" data-sort="value">${curMonAbbrev()}${sortIcon("value")}</th>
-      <th style="text-align:right;cursor:pointer;user-select:none;" data-sort="yoy">YoY%${sortIcon("yoy")}</th>
-    </tr></thead><tbody>`;
+    <div style="max-height:480px;overflow:auto;"><table class="dt">
+    <thead>
+      <tr>
+        <th style="cursor:pointer;user-select:none;" data-sort="name">${isState?"State":"District"}${sortIcon("name")}</th>
+        <th style="cursor:pointer;user-select:none;" data-sort="region">${isState?"Zone":"State"}${sortIcon("region")}</th>
+        <th style="text-align:right;cursor:pointer;user-select:none;" data-sort="prev">Prev Month${sortIcon("prev")}</th>
+        <th style="text-align:right;cursor:pointer;user-select:none;" data-sort="value">${curMonAbbrev()}${sortIcon("value")}</th>
+        <th style="text-align:right;cursor:pointer;user-select:none;" data-sort="yoy">YoY%${sortIcon("yoy")}</th>
+      </tr>
+      <tr style="background:#EEF2EE;">
+        <th style="padding:4px 6px;">
+          <input type="text" id="colFilterName" placeholder="Filter name..." value="${f.name||""}" style="width:100%;font-size:11px;padding:3px 5px;border-radius:4px;border:1px solid var(--line);" />
+        </th>
+        <th style="padding:4px 6px;">
+          <select id="colFilterRegion" style="width:100%;font-size:11px;padding:3px 3px;border-radius:4px;border:1px solid var(--line);">
+            <option value="">All ${isState?"Zones":"States"}</option>
+            ${regionOpts}
+          </select>
+        </th>
+        <th style="padding:4px 6px;text-align:right;">
+          <input type="number" id="colFilterPrevMin" placeholder="Min..." value="${f.prevMin||""}" style="width:100%;font-size:11px;padding:3px 5px;border-radius:4px;border:1px solid var(--line);text-align:right;" />
+        </th>
+        <th style="padding:4px 6px;text-align:right;">
+          <input type="number" id="colFilterValueMin" placeholder="Min..." value="${f.valueMin||""}" style="width:100%;font-size:11px;padding:3px 5px;border-radius:4px;border:1px solid var(--line);text-align:right;" />
+        </th>
+        <th style="padding:4px 6px;text-align:right;">
+          <select id="colFilterYoy" style="width:100%;font-size:11px;padding:3px 3px;border-radius:4px;border:1px solid var(--line);">
+            <option value="ALL" ${f.yoyType==="ALL"?"selected":""}>All YoY</option>
+            <option value="POS" ${f.yoyType==="POS"?"selected":""}>&gt;0% Positive</option>
+            <option value="HIGH" ${f.yoyType==="HIGH"?"selected":""}>&gt;50% Green</option>
+            <option value="NEG" ${f.yoyType==="NEG"?"selected":""}>&lt;0% Red</option>
+          </select>
+        </th>
+      </tr>
+    </thead>
+    <tbody>`;
 
   filtered.forEach(r=>{
     const zone=isState?`<span class="pill" style="background:${REGION_COLORS[r.region]||COL.sage}">${r.region}</span>`:`<span style="color:var(--ink2)">${r.region}</span>`;
     const yoyHtml = fmtPctHtml(r.yoy);
-    html+=`<tr><td style="font-weight:500">${r.name}</td><td>${zone}</td>
-      <td class="n">${fmt(r.prev)}</td><td class="n" style="font-weight:600">${fmt(r.value)}</td>
-      <td class="n yoy-hover-cell" data-yoy-code="${r.code}" data-yoy-name="${r.name}" data-yoy-level="${S.level}" style="cursor:help;">${yoyHtml}</td></tr>`;
+    html+=`<tr>
+      <td style="font-weight:500">${r.name}</td>
+      <td>${zone}</td>
+      <td class="n">${fmt(r.prev)}</td>
+      <td class="n" style="font-weight:600">${fmt(r.value)}</td>
+      <td class="n yoy-hover-cell" data-yoy-code="${r.code}" data-yoy-name="${r.name}" data-yoy-level="${S.level}" style="cursor:help;">${yoyHtml}</td>
+    </tr>`;
   });
 
   html+=`</tbody></table></div>`; sec.innerHTML=html;
 
   setTimeout(()=>{
-    const input = sec.querySelector("#tableSearch");
-    if(input){
-      input.oninput = e => {
-        S.tableSearch = e.target.value;
-        const card = document.getElementById("dataTableCard");
-        if(card){
-          const newCard = dataTable(rows);
-          card.replaceWith(newCard);
-          const newInput = document.getElementById("tableSearch");
-          if(newInput) { newInput.focus(); newInput.setSelectionRange(newInput.value.length, newInput.value.length); }
+    const updateTable = () => {
+      const card = document.getElementById("dataTableCard");
+      if(card){
+        const activeId = document.activeElement ? document.activeElement.id : null;
+        const curPos = document.activeElement && document.activeElement.selectionStart ? document.activeElement.selectionStart : null;
+        const newCard = dataTable(rows);
+        card.replaceWith(newCard);
+        if(activeId){
+          const el = document.getElementById(activeId);
+          if(el) { el.focus(); if(curPos != null && el.setSelectionRange) el.setSelectionRange(curPos, curPos); }
         }
-      };
-    }
+      }
+    };
+
+    const fn = sec.querySelector("#colFilterName");
+    if(fn) fn.oninput = e => { S.colFilters.name = e.target.value; updateTable(); };
+
+    const fr = sec.querySelector("#colFilterRegion");
+    if(fr) fr.onchange = e => { S.colFilters.region = e.target.value; updateTable(); };
+
+    const fp = sec.querySelector("#colFilterPrevMin");
+    if(fp) fp.oninput = e => { S.colFilters.prevMin = e.target.value; updateTable(); };
+
+    const fv = sec.querySelector("#colFilterValueMin");
+    if(fv) fv.oninput = e => { S.colFilters.valueMin = e.target.value; updateTable(); };
+
+    const fy = sec.querySelector("#colFilterYoy");
+    if(fy) fy.onchange = e => { S.colFilters.yoyType = e.target.value; updateTable(); };
+
+    const ts = sec.querySelector("#tableSearch");
+    if(ts) ts.oninput = e => { S.tableSearch = e.target.value; updateTable(); };
+
+    const btnClear = sec.querySelector("#btnClearFilters");
+    if(btnClear) btnClear.onclick = () => {
+      S.colFilters = { name: "", region: "", prevMin: "", valueMin: "", yoyType: "ALL" };
+      S.tableSearch = "";
+      updateTable();
+    };
+
     sec.querySelectorAll("th[data-sort]").forEach(th=>{
       th.onclick = () => {
         const sc = th.getAttribute("data-sort");
@@ -863,11 +953,7 @@ function dataTable(rows){
         } else {
           S.tableSort = { col: sc, dir: (sc === "name" || sc === "region") ? "asc" : "desc" };
         }
-        const card = document.getElementById("dataTableCard");
-        if(card){
-          const newCard = dataTable(rows);
-          card.replaceWith(newCard);
-        }
+        updateTable();
       };
     });
   }, 0);
